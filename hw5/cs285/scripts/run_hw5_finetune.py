@@ -50,6 +50,29 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
 
     # Replay buffer
     replay_buffer = ReplayBuffer(capacity=config["total_steps"])
+    
+    # Load offline dataset into replay buffer
+    dataset_file = os.path.join(args.dataset_dir, f"{config['dataset_name']}.pkl")
+    print(f"Loading offline dataset from {dataset_file}...")
+    with open(dataset_file, "rb") as f:
+        offline_dataset = pickle.load(f)
+    
+    # Copy data from offline dataset to new replay buffer
+    # The offline_dataset is a ReplayBuffer object
+    if offline_dataset.size > 0:
+        # Use min to avoid index out of bounds if dataset was from a previous run
+        num_samples = min(offline_dataset.size, len(offline_dataset.observations))
+        for i in range(num_samples):
+            replay_buffer.insert(
+                observation=offline_dataset.observations[i],
+                action=offline_dataset.actions[i],
+                reward=offline_dataset.rewards[i],
+                done=offline_dataset.dones[i],
+                next_observation=offline_dataset.next_observations[i],
+            )
+        print(f"Loaded {num_samples} transitions from offline dataset")
+    else:
+        print("Warning: Offline dataset is empty!")
 
     observation = env.reset()
 
@@ -60,6 +83,41 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
 
     for step in tqdm.trange(config["total_steps"], dynamic_ncols=True):
         # TODO(student): Borrow code from another online training script here. Only run the online training loop after `num_offline_steps` steps.
+        
+        epsilon = None
+        
+        # Online phase: interact with environment after offline steps
+        if step >= num_offline_steps:
+            # Get epsilon for exploration (if schedule exists)
+            if exploration_schedule is not None:
+                epsilon = exploration_schedule.value(step - num_offline_steps)
+                action = agent.get_action(observation, epsilon)
+            else:
+                action = agent.get_action(observation)
+
+            # Take action in environment
+            next_observation, reward, done, info = env.step(action)
+            next_observation = np.asarray(next_observation)
+
+            truncated = info.get("TimeLimit.truncated", False)
+
+            # Add to replay buffer
+            replay_buffer.insert(
+                observation=observation,
+                action=action,
+                reward=reward,
+                done=done and not truncated,
+                next_observation=next_observation,
+            )
+            recent_observations.append(observation)
+
+            # Handle episode termination
+            if done:
+                observation = env.reset()
+                logger.log_scalar(info["episode"]["r"], "train_return", step)
+                logger.log_scalar(info["episode"]["l"], "train_ep_len", step)
+            else:
+                observation = next_observation
 
         # Main training loop
         batch = replay_buffer.sample(config["batch_size"])
@@ -109,14 +167,15 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
 
         if step % args.visualize_interval == 0:
             env_pointmass: Pointmass = env.unwrapped
-            observations = np.stack(recent_observations)
-            recent_observations = []
-            logger.log_figure(
-                visualize(env_pointmass, agent, observations),
-                "exploration_trajectories",
-                step,
-                "eval",
-            )
+            if len(recent_observations) > 0:
+                observations = np.stack(recent_observations)
+                recent_observations = []
+                logger.log_figure(
+                    visualize(env_pointmass, agent, observations),
+                    "exploration_trajectories",
+                    step,
+                    "eval",
+                )
 
     # Save the final dataset
     dataset_file = os.path.join(args.dataset_dir, f"{config['dataset_name']}.pkl")
@@ -129,7 +188,9 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
         env_pointmass, agent, replay_buffer.observations[: config["total_steps"]]
     )
     fig.suptitle("State coverage")
-    filename = os.path.join("exploration", f"{config['log_name']}.png")
+    exploration_viz_dir = os.path.join(args.dataset_dir, "..", "exploration_visualization")
+    os.makedirs(exploration_viz_dir, exist_ok=True)
+    filename = os.path.join(exploration_viz_dir, f"{config['log_name']}.png")
     fig.savefig(filename)
     print("Saved final heatmap to", filename)
 

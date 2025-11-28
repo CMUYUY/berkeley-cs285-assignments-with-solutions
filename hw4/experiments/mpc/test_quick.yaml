@@ -1,0 +1,16 @@
+env_name: reacher-cs285-v0
+exp_name: hw4_test
+
+base_config: mpc
+num_layers: 2
+hidden_size: 250
+
+num_iters: 2
+initial_batch_size: 1000
+batch_size: 500
+num_agent_train_steps_per_iter: 200
+num_eval_trajectories: 5
+mpc_strategy: random
+mpc_num_action_sequences: 100
+mpc_horizon: 5
+ensemble_size: 1

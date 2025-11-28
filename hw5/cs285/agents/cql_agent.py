@@ -42,6 +42,19 @@ class CQLAgent(DQNAgent):
 
         # TODO(student): modify the loss to implement CQL
         # Hint: `variables` includes qa_values and q_values from your CQL implementation
-        loss = loss + ...
+        qa_values = variables["qa_values"]  # Q(s, a) for all actions
+        
+        # Compute CQL penalty: logsumexp(Q(s, :) / temperature) * temperature - Q(s, a_data)
+        q_logsumexp = torch.logsumexp(qa_values / self.cql_temperature, dim=1)
+        q_data = qa_values.gather(1, action.unsqueeze(1)).squeeze(1)
+        
+        cql_penalty = (q_logsumexp * self.cql_temperature - q_data).mean()
+        
+        # Add CQL penalty to loss
+        loss = loss + self.cql_alpha * cql_penalty
+        
+        # Log CQL metrics
+        metrics["cql_penalty"] = cql_penalty.item()
+        metrics["q_logsumexp"] = q_logsumexp.mean().item()
 
         return loss, metrics, variables

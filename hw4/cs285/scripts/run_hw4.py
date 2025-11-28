@@ -44,6 +44,20 @@ def collect_mbpo_rollout(
         # HINT: get actions from `sac_agent` and `next_ob` predictions from `mb_agent`.
         # Average the ensemble predictions directly to get the next observation.
         # Get the reward using `env.get_reward`.
+        
+        # Get action from SAC agent
+        ac = sac_agent.get_action(ob)
+        
+        # Get next_ob predictions from all models in the ensemble and average them
+        next_ob_predictions = np.array([
+            mb_agent.get_dynamics_predictions(i, ob[None], ac[None])[0]
+            for i in range(mb_agent.ensemble_size)
+        ])
+        next_ob = next_ob_predictions.mean(axis=0)
+        
+        # Get reward
+        rew, _ = env.get_reward(next_ob[None], ac[None])
+        rew = rew[0]
 
         obs.append(ob)
         acs.append(ac)
@@ -119,10 +133,20 @@ def run_training_loop(
         if itr == 0:
             # TODO(student): collect at least config["initial_batch_size"] transitions with a random policy
             # HINT: Use `utils.RandomPolicy` and `utils.sample_trajectories`
-            trajs, envsteps_this_batch = ...
+            trajs, envsteps_this_batch = utils.sample_trajectories(
+                env,
+                utils.RandomPolicy(env),
+                config["initial_batch_size"],
+                ep_len
+            )
         else:
             # TODO(student): collect at least config["batch_size"] transitions with our `actor_agent`
-            trajs, envsteps_this_batch = ...
+            trajs, envsteps_this_batch = utils.sample_trajectories(
+                env,
+                actor_agent,
+                config["batch_size"],
+                ep_len
+            )
 
         total_envsteps += envsteps_this_batch
         logger.log_scalar(total_envsteps, "total_envsteps", itr)
@@ -165,6 +189,16 @@ def run_training_loop(
             # TODO(student): train the dynamics models
             # HINT: train each dynamics model in the ensemble with a *different* batch of transitions!
             # Use `replay_buffer.sample` with config["train_batch_size"].
+            for i in range(mb_agent.ensemble_size):
+                # Sample a different batch for each model
+                batch = replay_buffer.sample(config["train_batch_size"])
+                loss = mb_agent.update(
+                    i,
+                    batch["observations"],
+                    batch["actions"],
+                    batch["next_observations"]
+                )
+                step_losses.append(loss)
             all_losses.append(np.mean(step_losses))
 
         # on iteration 0, plot the full learning curve

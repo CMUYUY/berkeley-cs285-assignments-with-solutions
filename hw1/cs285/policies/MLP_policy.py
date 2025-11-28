@@ -129,7 +129,19 @@ class MLPPolicySL(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
         # through it. For example, you can return a torch.FloatTensor. You can also
         # return more flexible objects, such as a
         # `torch.distributions.Distribution` object. It's up to you!
-        raise NotImplementedError
+        
+        # Compute the mean of the action distribution
+        mean = self.mean_net(observation)
+        
+        # Get the standard deviation (exp of logstd for numerical stability)
+        std = torch.exp(self.logstd)
+        
+        # Create a normal distribution with the computed mean and std
+        action_distribution = distributions.Normal(mean, std)
+        
+        # Return the distribution object so we can sample from it
+        # and also compute log probabilities if needed
+        return action_distribution
 
     def update(self, observations, actions):
         """
@@ -141,8 +153,55 @@ class MLPPolicySL(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
             dict: 'Training Loss': supervised learning loss
         """
         # TODO: update the policy and return the loss
-        loss = TODO
+        
+        # Convert observations and actions to tensors
+        observations = ptu.from_numpy(observations)
+        actions = ptu.from_numpy(actions)
+        
+        # Forward pass: get action distribution
+        action_distribution = self.forward(observations)
+        
+        # Compute loss: negative log likelihood of expert actions under our policy
+        # This is equivalent to minimizing the distance between predicted and expert actions
+        log_prob = action_distribution.log_prob(actions)
+        loss = -log_prob.mean()
+        
+        # Alternative: could use MSE loss
+        # predicted_actions = action_distribution.mean
+        # loss = F.mse_loss(predicted_actions, actions)
+        
+        # Backward pass and optimization
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        
         return {
             # You can add extra logging information here, but keep this line
             'Training Loss': ptu.to_numpy(loss),
         }
+
+    def get_action(self, obs: np.ndarray) -> np.ndarray:
+        """
+        Query the policy for actions given observations.
+        
+        :param obs: observation(s) to query
+        :return: sampled action(s)
+        """
+        if len(obs.shape) > 1:
+            # Batch of observations
+            observation = obs
+        else:
+            # Single observation - add batch dimension
+            observation = obs[None]
+        
+        # Convert to tensor
+        observation = ptu.from_numpy(observation)
+        
+        # Get action distribution
+        action_distribution = self.forward(observation)
+        
+        # Sample action from the distribution
+        action = action_distribution.sample()
+        
+        # Convert back to numpy
+        return ptu.to_numpy(action)
