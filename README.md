@@ -1,6 +1,6 @@
 Assignments  for [Berkeley CS 285: Deep Reinforcement Learning, Decision Making, and Control](http://rail.eecs.berkeley.edu/deeprlcourse/).
 
-The TODO code has been completed, along with the experimental running results.
+The TODO codes have been completed, along with the experimental running results.
 
 Any errors are welcome to be pointed out.
 
